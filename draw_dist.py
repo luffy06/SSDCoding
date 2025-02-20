@@ -1,96 +1,130 @@
-import os, sys
-import matplotlib.pyplot as plt
-import statsmodels.api as sm
+import os
+import sys
+import argparse
 import numpy as np
-import seaborn as sns
-from scipy import stats
+import matplotlib.pyplot as plt
 
-def draw_prop(lines, repeat, fig_path):
-  blocks = []
+def gen_states(depth, state):
+  if depth == 0:
+    return [int(state)]
+  res = []
+  for i in range(8):
+    res += gen_states(depth - 1, state + str(i))
+  return res
+
+def draw_overall_prop(lines, tag, states, sort_probs=False):
+  props = {state: None for state in states}
   for line in lines:
-    blocks += line.split('/')
-
-  def gen_states(depth, state):
-    if depth == 0:
-      return [int(state)]
-    res = []
-    for i in range(8):
-      res += gen_states(depth - 1, state + str(i))
-    return res
-    
-  fig = plt.figure()
-  y_max = 0
-  states = gen_states(repeat, '')
-  for block in blocks:
-    if block.strip() == '':
-      continue
-    data = block.strip().split(';')
-    ct = {}
-    for state in states:
-      ct[state] = 0
+    data = line.strip().split(' ')
     for d in data:
       if d.strip() == '':
         continue
-      d = d.split(',')
-      ct[int(d[0])] += (float(d[2]))
-      y_max = np.max((float(d[2]), y_max))
-    x = []
-    y = []
-    for k, v in sorted(ct.items(), key=lambda item: item[0]):
-      x.append(k)
-      y.append(v)
-    plt.scatter(x, y, s=2)
-    plt.plot(x, y, '-')
-  y_max = np.min((np.ceil(y_max / 5) * 5, 100))
-
-  plt.title('.'.join(source_path.split('/')[-1].split('.')[:-1]))
-  plt.ylim(0, y_max)
-  plt.ylabel('Prop.')
+      if d.startswith(tag):
+        d = d[len(tag):].strip('[]').split(',')
+        state, prop = float(d[0].strip()), float(d[1].strip())
+        if state in props:
+          props[state] = prop
+        else:
+          print('State not found:', state)
+  sum_prop = 0
+  for state in states:
+    assert props[state] is not None
+    sum_prop += props[state]
   
-  plt.savefig(fig_path)
+  probs = []
+  for i, state in enumerate(states):
+    probs.append(props[state] / sum_prop)
+  
+  if sort_probs:
+    probs = sorted(probs, reverse=True)
 
-def draw_dist(lines, fig_path):
-  data = {}
+  cum_probs = []
+  for i, prob in enumerate(probs):
+    cum_probs.append(prob + cum_probs[-1] if i > 0 else prob)
+
+  return cum_probs
+
+def draw_block_entropy(lines, tag):
+  entropies = []
   for line in lines:
-    line = line.strip().split(';')
-    for l in line:
-      l = l.strip()
-      if l != "":
-        l = l.split(',')
-        state = l[0]
-        count = [int(l_i) for l_i in l[1:]]
-        data[state] = count
-  
-  s = 0
-  for k, v in data.items():
-    s += v[0]
+    data = line.strip().split(' ')
+    for d in data:
+      if d.strip() == '':
+        continue
+      if d.startswith(tag):
+        d = d[len(tag):].strip('[]').split(',')
+        block_id, entropy = int(d[0].strip()), float(d[1].strip())
+        entropies.append(entropy)
 
-  fig, axes = plt.subplots(2, 4)
-  for k, v in data.items():
-    # sub_fig_path = '.'.join(fig_path.split('.')[:-1] + [k, 'png'])
-    # ax1.plot(v)
-    idx = int(k)
-    axes[idx // 4, idx % 4].set_ylim(0, 50)
-    axes[idx // 4, idx % 4].set_xlabel(k)
-    if idx % 4:
-      axes[idx // 4, idx % 4].get_yaxis().set_visible(False)
-    sns.histplot(ax=axes[idx // 4, idx % 4], x=np.arange(len(v)), bins=50, 
-                  weights=np.array(v) / s)
-  
-  plt.subplots_adjust(wspace=0.05, hspace=0.3)
-  plt.savefig('.'.join(fig_path.split('.')[:-1] + ['dist', 'png']))
+  return entropies  
 
 if __name__ == '__main__':
-  if len(sys.argv) < 4:
-    sys.exit('usage: ./draw_dist.py (repeat) (source path) (figure path)')
+  parser = argparse.ArgumentParser()
+  parser.add_argument('--repeat', type=int, help='repeat')
+  parser.add_argument('--origin_path', type=str, help='origin path')
+  parser.add_argument('--encoded_path', type=str, help='encoded path')
+  parser.add_argument('--output_path', type=str, help='output path')
+  parser.add_argument('--sort_probs', action='store_true', help='sort probs')
+  args = parser.parse_args()
   
-  repeat = int(sys.argv[1])
-  source_path = sys.argv[2]
-  fig_path = sys.argv[3]
-  f = open(source_path)
-  lines = f.readlines()
-  f.close()
+  with open(args.origin_path, "r") as f:
+    origin_data = f.readlines()
+  with open(args.encoded_path, "r") as f:
+    encoded_data = f.readlines()
+
+  if not os.path.exists(args.output_path):
+    os.makedirs(args.output_path)
+
+  states = gen_states(args.repeat, '')
+  origin_probs = draw_overall_prop(origin_data, "Overall-State:", states, True)
+  origin_entropies = draw_block_entropy(origin_data, "Block-Entropy:")
+
+  with open(os.path.join(args.output_path, 'origin_cum_probs.txt'), 'w') as f:
+    for i, prob in zip(range(len(states)), origin_probs):
+      f.write(f'{i}\t{prob}\n')
   
-  draw_prop(lines, repeat, fig_path)
-  # draw_dist(lines, fig_path)
+  with open(os.path.join(args.output_path, 'origin_entropies.txt'), 'w') as f:
+    for i, entropy in enumerate(origin_entropies):
+      f.write(f'{i}\t{entropy}\n')
+
+  encoded_probs = draw_overall_prop(encoded_data, "Overall-State:", states, True)
+  encoded_entropies = draw_block_entropy(encoded_data, "Block-Entropy:")
+  nx = np.min([len(origin_entropies), len(encoded_entropies)])
+  origin_entropies = origin_entropies[:nx]
+  encoded_entropies = encoded_entropies[:nx]
   
+  with open(os.path.join(args.output_path, 'encoded_cum_probs.txt'), 'w') as f:
+    for i, prob in zip(range(len(states)), encoded_probs):
+      f.write(f'{i}\t{prob}\n')
+    
+  with open(os.path.join(args.output_path, 'encoded_entropies.txt'), 'w') as f:
+    for i, entropy in enumerate(encoded_entropies):
+      f.write(f'{i}\t{entropy}\n')
+
+  filename = args.output_path.split('/')[-1]
+  nx = len(states) + 1
+  prob_fig_path = os.path.join(args.output_path, 'prob.png')
+  plt.figure()
+  plt.title(f'Cumulative Probability of {filename}')
+  plt.plot(np.arange(nx), [0] + origin_probs, 'b--', label='Origin')
+  plt.plot(np.arange(nx), [0] + encoded_probs, 'r-', label='Encoded')
+  plt.xticks(np.arange(nx), [i for i in range(nx)])
+  plt.xlim(0, nx)
+  plt.ylim(0, 1)
+  plt.ylabel('Probabilitiy')
+  plt.legend()
+  plt.savefig(prob_fig_path)
+
+  nx = np.min([len(origin_entropies), len(encoded_entropies)])
+  entropy_fig_path = os.path.join(args.output_path, 'entropy.png')  
+  plt.figure()
+  plt.title(f'Block Entropy of {filename}')
+  plt.plot(np.arange(nx), origin_entropies, 'b--', label='Origin')
+  plt.plot(np.arange(nx), encoded_entropies, 'r-', label='Encoded')
+  plt.xticks(np.arange(nx), [i for i in range(nx)])
+  plt.xlim(0, nx)
+  plt.ylim(0, int(np.ceil(np.max([np.max(origin_entropies), np.max(encoded_entropies)]))) + 1)
+  plt.ylabel('Entropy')
+  plt.legend()
+  plt.savefig(entropy_fig_path)
+

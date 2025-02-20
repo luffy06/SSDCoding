@@ -19,9 +19,7 @@ void print_grouped_states(const std::vector<StateInfo>& grouped_states,
 
 void map_state(Block& block, int num_pages, int num_grouped, 
                const std::set<char>& sign_states, 
-               std::map<char, uint32_t>& state_count_all, 
-               bool show_detailed_dist=false, bool show_ratio=false, 
-               bool show_grouped_states=false) {
+               std::map<std::string, int>& state_count_all) {
   // Get single state.
   std::vector<char> single_states;
   single_states.reserve(block.page_size);
@@ -36,23 +34,6 @@ void map_state(Block& block, int num_pages, int num_grouped,
         }
         single_states.push_back(itoc(state, 1 << num_pages));
       }
-    }
-  }
-
-  std::map<char, uint32_t> state_count;
-  for (const auto s: single_states) {
-    if (state_count.find(s) == state_count.end()) {
-      state_count[s] = 1;
-    } else {
-      state_count[s] ++;
-    }
-  }
-
-  for (const auto kv: state_count) {
-    if (state_count_all.find(kv.first) != state_count_all.end()) {
-      state_count_all[kv.first] += kv.second;
-    } else {
-      state_count_all[kv.first] = kv.second;
     }
   }
 
@@ -79,7 +60,7 @@ void map_state(Block& block, int num_pages, int num_grouped,
     }
   }
 
-  // Sort the grouped states based on the frequency.
+  // Sort the grouped states based on the state.
   std::sort(grouped_states.begin(), grouped_states.end(), 
     [](auto const& a, auto const& b) {
       if (!compare(a.significance.first, b.significance.first)) {
@@ -93,27 +74,31 @@ void map_state(Block& block, int num_pages, int num_grouped,
       }
   });
 
+  // Merge the state count.
+  for (const auto state_info: grouped_states) {
+    if (state_count_all.find(state_info.value) != state_count_all.end()) {
+      state_count_all[state_info.value] += state_info.count;
+    } else {
+      state_count_all[state_info.value] = state_info.count;
+    }
+  }
+
   // Print grouped states
+  for (const auto state_info: grouped_states) {
+    COUT_INFO("Block-State:[" << block.block_id << "," << state_info.value << "," << state_info.count << "]");
+  }
+
+  // Compute the entropy of the single states.
   double sum = 0;
-  double sum_sign = 0;
-  if (show_detailed_dist) {
-    COUT_INFO("\nSingle state of block-" << block.block_id);
+  double sum_count = 0;
+  for (const auto state_info: grouped_states) {
+    sum_count += state_info.count;
   }
-  for (const auto kv: state_count) {
-    if (show_detailed_dist) {
-      COUT_INFO("\tBlock-State:[" << block.block_id << "," << kv.first << "," << kv.second << "]");
-    }
-    if (sign_states.find(kv.first) != sign_states.end()) {
-      sum_sign += kv.second;
-    }
-    sum += kv.second;
+  for (const auto state_info: grouped_states) {
+    double ratio = state_info.count * 1. / sum_count;
+    sum += - ratio * log2(ratio);
   }
-  if (show_ratio) {
-    COUT_INFO("Ratio: " << std::setprecision(2) << sum_sign / sum);
-  }
-  if (show_grouped_states) {
-    print_grouped_states(grouped_states, num_grouped, sign_states);
-  }
+  COUT_INFO("Block-Entropy:[" << block.block_id << "," << sum << "]");
 }
 
 int main(int argc, char* argv[]) {
@@ -129,9 +114,6 @@ int main(int argc, char* argv[]) {
      "the page size in KB")
     ("num_grouped", po::value<int>(), 
      "the number of grouped states")
-    ("show_ratio", "show_ratio")
-    ("show_detailed_dist", "show_detailed_dist")
-    ("show_grouped_states", "show_grouped_states")
     ("significant_states", po::value<std::string>(), 
      "the list of significant state")
   ;
@@ -152,9 +134,6 @@ int main(int argc, char* argv[]) {
   int num_pages = vm["num_pages"].as<int>();
   int page_size_in_bytes = vm["page_size"].as<int>() * 1024;
   int num_grouped = vm["num_grouped"].as<int>();
-  bool show_ratio = vm.count("show_ratio");
-  bool show_detailed_dist = vm.count("show_detailed_dist");
-  bool show_grouped_states = vm.count("show_grouped_states");
   std::set<char> significant_states;
   if (vm.count("significant_states")) {
     std::string states = vm["significant_states"].as<std::string>();
@@ -189,26 +168,14 @@ int main(int argc, char* argv[]) {
   }
 
   COUT_INFO("# blocks:" << blocks.size());
-  std::map<char, uint32_t> state_count_all;
+  std::map<std::string, int> state_count_all;
   uint32_t page_idx = 0;
   for (int i = 0; i < blocks.size(); ++ i, ++ page_idx) {
-    map_state(blocks[i], num_pages, num_grouped, significant_states, 
-              state_count_all, show_detailed_dist, show_ratio, 
-              show_grouped_states);
+    map_state(blocks[i], num_pages, num_grouped, significant_states, state_count_all);
   }
 
-  double sum = 0;
-  double sum_sign = 0;
-  COUT_INFO("Overall single state counting information:");
   for (const auto kv: state_count_all) {
-    COUT_INFO("\tState:[" << kv.first << "," << kv.second << "]");
-    if (significant_states.find(kv.first) != significant_states.end()) {
-      sum_sign += kv.second;
-    }
-    sum += kv.second;
-  }
-  if (show_ratio) {
-    COUT_INFO("Ratio of Significant Pattern: " << std::setprecision(2) << sum_sign / sum);
+    COUT_INFO("\tOverall-State:[" << kv.first << "," << kv.second << "]");
   }
   return 0;
 }
