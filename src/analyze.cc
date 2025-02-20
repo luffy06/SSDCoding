@@ -212,7 +212,7 @@ int main(int argc, char* argv[]) {
     sum += kv.second;
   }
   if (show_ratio) {
-    COUT_INFO("Ratio: " << std::setprecision(2) << sum_sign / sum);
+    COUT_INFO("Ratio of Significant Pattern: " << std::setprecision(2) << sum_sign / sum);
   }
   return 0;
 }

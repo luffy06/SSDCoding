@@ -397,6 +397,11 @@ int main(int argc, char* argv[]) {
   }
 
   // Construct candidate maps
+  if (verbose) {
+    for (auto s: significant_states) {
+      std::cout << "Significant State [" << s << "]" << std::endl;
+    }
+  }
   std::vector<std::string> maps;
   build_mapping_states(num_pages, num_grouped, significant_states, maps);
 
